@@ -1,0 +1,131 @@
+---
+title: "Prediction Assignment Writeup"
+subtitle: "Human Activity Recognition"
+author: "Daniel de Amaral"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+---
+
+```{r include=F}
+knitr::opts_chunk$set(echo = T, warning = F, message = F)
+```
+
+## Overview
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Libraries
+
+We will import the tidyverse libraries for data manipulation and graphing in general, and the caret modeling library.
+
+```{r}
+require(tidyverse)
+require(caret)
+```
+
+## Load Data
+
+Let's read the data set and check its dimensions
+
+```{r}
+train <- read_csv('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv')
+test <- read_csv('https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv')
+dim(train)
+```
+
+## Missing Values
+
+As we have many variables, we may have missing data problems. Let's check the count of missing values
+
+```{r}
+missing.values <- train %>%
+  gather(key = "key", value = "val") %>%
+  mutate(is.missing = is.na(val)) %>%
+  group_by(key) %>%
+  summarise(num.missing = round(100*sum(is.missing)/nrow(train), 2)) %>%
+  arrange(desc(num.missing)) 
+missing.values %>%
+  ggplot(aes(x = num.missing)) +
+  geom_histogram() +
+  labs(x = 'Missing Values in variables (%)', y = "Count", 
+       title = 'Percentage of missing values') 
+```
+
+Since we have variables with almost 100% of their data missing and on the other hand variables with all the data present. Thus, we will remove the variables with a certain percentage of missing values, for example 30%.
+
+```{r}
+train <- train %>%
+  discard(~sum(is.na(.x))/length(.x)* 100 >= 30)
+any(is.na(train))
+```
+
+Let's check the remaining variables in the data set
+
+```{r}
+colnames(train)
+```
+
+## Remove non-informational variables
+
+Having removed the variables with missing value problems, we will take care of the variables that do not generate relevant information for the prediction such as: line index, date, user name, etc.
+
+```{r}
+train <- train %>%
+  select(-(X1:num_window))
+test <- subset(test, select = colnames(train)[-53])
+```
+
+## Modelling with Random Forest
+
+As we have a large data set, many observations and variables. We will apply a classifier based on sub sets of data, for that we choose the classifier of random forests.
+
+### Parameters
+
+Here we will use the 10 fold cross validation method to get an idea of how our classifier fits the data.
+
+```{r}
+trc <- trainControl(method = 'cv', number = 10, summaryFunction = multiClassSummary,
+                    classProbs = TRUE, verboseIter = F)
+```
+
+### Grid Search
+
+Let's create the Grid Search vector
+
+```{r}
+sgrid <- expand.grid(.mtry = seq(2, 81, 6))
+```
+
+
+### Model
+
+We will use the random forest method "rf" with the number of trees adjusted to 1000 trees and the other parameters like "mtry" we will leave the random selection. We will also apply the standardization as preprocessing, that is, remove the mean (center) and subtract by the respective standard deviation (scale).
+
+```{r}
+MOD <- train(classe ~ ., data = train, method = 'rf', 
+             trControl = trc, ntree = 1000, metric = 'Accuracy',
+             preProc = c('center', 'scale'))
+```
+
+### Evaluation
+
+For the evaluation of the model we will use the metrics of the 10 iterations of the model in the cross-validation and through this we will check the confusion matrix.
+
+```{r}
+confusionMatrix(MOD, mode = "prec_recall")
+```
+
+Note that we have an high average accuracy in the 10 folds of the validation. As the model seems to be the best possible there is no need to change anything else.
+
+### Test prediction
+
+We will predict in the test set and store the result in a .csv file
+
+```{r}
+prediction <- predict(MOD, newdata = test)
+prediction
+write_csv(tibble(prediction), 'prediction.csv')
+```
